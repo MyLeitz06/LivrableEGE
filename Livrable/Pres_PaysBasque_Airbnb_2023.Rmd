@@ -1,0 +1,600 @@
+---
+title: "Analyse Airbnb du Pays Basque"
+subtitle: "<br/>Données de juin 2023"
+author: "Mylène Leitzelman"
+institute: "Formation Datascience & Transformation Digitale - EGE"
+date: "11/11/2023"
+output:
+  xaringan::moon_reader:
+    css: [default, rladies, rladies-fonts]
+    lib_dir: libs
+    nature:
+      beforeInit: "macros.js"
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+options(htmltools.dir.version = FALSE)
+
+#libraies
+
+library(tidyverse)
+library(plyr)
+library(dplyr)
+library(questionr)
+library(gtsummary)
+library(ggplot2)
+library(lubridate)
+library(knitr)
+library(DT)
+library(highcharter)
+library(leaflet)
+library(ggcorrplot)
+library(wordcloud)
+library(tm)
+
+#ouvrir la base Airbnb 
+library(readr)
+PaysBasque_listings <- read_csv("D:/dataset/Etude Airbnb Module 4&5/Pays_Basque_2023_listings.csv")
+
+#suppression des colonnes inutiles dans l'analyse
+PaysBasque_listings <- PaysBasque_listings %>% 
+  dplyr::select(-id, -scrape_id, -last_scraped, -source, -host_thumbnail_url, -host_picture_url, -calendar_last_scraped, -license)
+
+#Conversion de factor à numérique
+# elimination des pourcentages
+PaysBasque_listings$host_response_rate <- as.numeric(gsub("%", "", as.character(PaysBasque_listings$host_response_rate)))/100
+
+PaysBasque_listings$host_acceptance_rate <- as.numeric(gsub("%", "", as.character(PaysBasque_listings$host_acceptance_rate)))/100
+
+# lot de colonnes changé
+PaysBasque_listings <- PaysBasque_listings %>%
+mutate(across(c(latitude,longitude,review_scores_rating,review_scores_accuracy,review_scores_cleanliness,review_scores_checkin,review_scores_communication,review_scores_location,review_scores_value,reviews_per_month), as.numeric))
+
+# changement des dates avec lubridate
+PaysBasque_listings$host_since <- dmy(PaysBasque_listings$host_since)
+PaysBasque_listings$host_since_year <- year(PaysBasque_listings$host_since)
+PaysBasque_listings$first_review <- dmy(PaysBasque_listings$first_review)
+PaysBasque_listings$last_review <- dmy(PaysBasque_listings$last_review)
+
+# changer True/False en t/f
+PaysBasque_listings$host_has_profile_pic <- as.factor(gsub("TRUE", "t", PaysBasque_listings$host_has_profile_pic))
+PaysBasque_listings$host_has_profile_pic <- as.factor(gsub("FALSE", "f", PaysBasque_listings$host_has_profile_pic))
+PaysBasque_listings$host_is_superhost <- as.factor(gsub("TRUE", "t", PaysBasque_listings$host_is_superhost))
+PaysBasque_listings$host_is_superhost <- as.factor(gsub("FALSE", "f", PaysBasque_listings$host_is_superhost))
+PaysBasque_listings$host_identity_verified <- as.factor(gsub("TRUE", "t", PaysBasque_listings$host_identity_verified))
+PaysBasque_listings$host_identity_verified <- as.factor(gsub("FALSE", "f", PaysBasque_listings$host_identity_verified))
+PaysBasque_listings$has_availability <- as.factor(gsub("TRUE", "t", PaysBasque_listings$has_availability))
+PaysBasque_listings$has_availability <- as.factor(gsub("FALSE", "f", PaysBasque_listings$has_availability))
+PaysBasque_listings$instant_bookable <- as.factor(gsub("TRUE", "t", PaysBasque_listings$instant_bookable))
+PaysBasque_listings$instant_bookable <- as.factor(gsub("FALSE", "f", PaysBasque_listings$instant_bookable))
+
+# changer les textes en factor
+PaysBasque_listings <- PaysBasque_listings %>%
+mutate(across(c("name", "host_name", "neighbourhood_group_cleansed", "neighbourhood_cleansed", "room_type", "property_type"), as.factor))
+
+```
+
+class: inverse, middle, left
+background-image: url(https://performanceexcellencenetwork.org/wp-content/uploads/2021/02/questions1.jpg)
+background-size: cover
+
+
+# Objectifs de l'étude
+### Tester les techniques de Datamining
+### Trouver des arguments touristiques
+
+---
+
+# Le site Inside Airbnb
+Pourquoi ce choix : 
+
+- Plateforme indépendante et à but non lucratif a été lancée en 2016 par l'activiste américain Murray Cox
+
+- Permet d'explorer l'utilisation réelle d'Airbnb dans les villes du monde entier et de questionner son fonctionnement.
+
+- Données analysées, nettoyées, agrégées et librement accessibles pour faciliter la discussion publique
+
+.footnote[
+[1] Lien profil [Murray Cox](https://www.linkedin.com/in/murrayscox)
+
+[2] Lien site [Inside Airbnb](http://insideairbnb.com/)
+
+]
+
+---
+
+# Pourquoi le Pays basque ?
+Ce choix se fonde sur quelques interrogations : 
+
+* Concernant la France, seulement trois autres villes françaises sont disponibles Paris, Lyon et Bordeaux, alors pourquoi le Pays basque qui ne représente ni une région administrative, ni une ville en particulier  et pourquoi pas la Côte d'Azur alors ?
+
+* Qu'est ce qui représente ce Pays basque (y a t'il une logique dans le choix des villes) ? Qu'est ce qui caractérisent les locations proposées, leurs hôtes ?
+
+* Serait-il possible de faire de même pour d'autres régions de France non représentée ?
+
+---
+
+# Airbnb en Pays basque
+Le jeu de données étudié regroupe **13648 annonces** (toutes uniques) correspondant au Pays basque, postés par **9646 hôtes** distincts entre mars 2023 et juin 2023 (le dernier listing de septembre 2023 étant sorti récemment). **142 villes** sont citées, où seulement 4 villes représentent plus de 55% des offres (Biarritz, Anglet, Bayonne et Saint-Jean-de-Luz, cf. 3.1.3).
+
+Le tableau comporte **76 variables**, 46 sont quantitatives (dont 5 binaires), 24 sont qualitatives (dont 15 purement en texte libre), 6 correspondent à des dates.
+
+Si la grande majorité des données provient du scrapping du site web d'Airbnb, certaines variables sont calculées comme les moyennes sur les types de score, les disponibilités ou le cumul des types de location par hôte (rappelons que le but de ce site est aussi de démontrer la gentrification touristique de certains quartiers dans les villes et débusquer les professionnels utilisant Airbnb à des fins mercantiles).
+
+---
+
+# Questions sur le corpus
+Nous espérons  nous faire une idée du profil des offres de locations et des hôtes qui caractérisent le pays basque chez AirBNB, en tentant de répondre à ces questions :
+
+.pull-left[
+1. Quel est le type de chambre le plus courant ?
+
+1. Quel est le top et le bottom 10 des types de propriété en fonction du prix moyen ?
+
+1. Quel est le top et le bottom 10 des types de propriété sur la base de la note d’évaluation ?
+
+1. Quels sont les équipements les plus courants ?
+
+1. Quelle répartition géographique des locations ?
+]
+
+.pull-right[
+1. 	Quels sont les 50 premiers hébergeurs en fonction de leur chiffre d’affaires ?
+
+1. Y a-t-il une différence dans le score des évaluations entre les super-hébergeurs et les hébergeurs normaux ?
+
+1. Y a-t-il une différence dans le taux de réponse entre un superhost et un host normal ?
+
+1. Comment le nombre d’hôtes rejoint-il Airbnb au fil du temps ?
+
+1. Quelle répartition géographique des hôtes ?
+
+]
+
+
+---
+
+# Méthodologie : préparation de la table
+Plusieurs transformations ont été nécessaires pour préparer les données, notamment : 
+
+* supprimer certaines colonnes inutiles,
+
+* convertir les dates au bon format,
+
+* convertir les colonnes de chiffres en éléments numérique (telles que les pourcentages),
+
+* supprimer ou transformer les non réponses dans plusieurs colonnes utilisées pour l'analyse
+
+
+
+---
+
+class: inverse, middle, center
+
+# 1. Les premières analyses
+
+---
+# Déroulement de la présentation
+
+.pull-left[
+
+
+
+![:scale 100%](https://skift.com/wp-content/uploads/2023/11/Guest-Favorites-Brazil-scaled.jpg)
+
+]
+
+
+.pull-right[
+
+Cette étude se présente comme suit : 
+
+* une première approche statistique des locations, de leurs hôtes et des prix pratiqués,
+
+* une partie dédiée à des analyses plus poussées sur les variables intéressantes retenues,
+
+* une analyse Textmining sur les variables textuelles nous semblant importantes.
+
+]
+
+
+---
+
+# Mer ou montagne ? le choix est fait
+La carte ci-dessous présente toutes les annonces du corpus : 
+
+```{r out.width='100%', fig.height=6, echo=FALSE, warning=FALSE}
+
+leaflet(PaysBasque_listings %>% 
+  select(longitude,neighbourhood_group_cleansed,neighbourhood_cleansed,latitude,price)) %>%
+  setView(lng = -1.562670, lat = 43.47372 ,zoom = 9) %>%
+  addTiles() %>% 
+  addMarkers(
+    clusterOptions = markerClusterOptions(),
+    label = paste("Location:", PaysBasque_listings$name)
+    )
+
+```
+
+
+---
+
+# 1.1 Un envie d'espace et d'indépendance
+Voici les premières statistiques sur le type de location (`room_type`) préféré dans le Pays basque :
+
+```{r out.width='100%', fig.height=5, dev='svg', echo=FALSE, warning=FALSE}
+resultloc <- PaysBasque_listings %>%
+  group_by(room_type) %>%
+  dplyr::summarise(frequency = n()) %>%
+  arrange(desc(frequency)) %>% 
+  dplyr::mutate(room_type = factor(room_type, levels = unique(room_type)))
+
+
+hchart(resultloc, type = "column", hcaes(x = reorder(room_type, -frequency), y = frequency, color = room_type)) %>%
+  hc_plotOptions(column = list(stacking = "normal"), pointWidth = 50) %>%
+  hc_xAxis(title = list(text = "Frequence")) %>%
+  hc_yAxis(title = list(text = "Nbr d'annonces Airbnb")) %>%
+  hc_title(text = "Distribution des types de biens immobiliers loués en Pays Basque") %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_chart(inverted = TRUE) %>%
+  hc_tooltip(
+    pointFormat = "Nbr : <b>{point.y}</b>"
+  ) %>%
+  hc_add_theme(hc_theme_ffx())
+```
+
+---
+
+# 1.2 Détail des biens immobiliers loués 
+On retrouve l'écrasante majorité des locations de logements entiers (s'agissant de villas, d'appartements, de logements dans des copropriétés *condo*), la queue du tableau fait apparaître les endroits insolites comme un yourte, une hûte, un chateau ou des bateaux.
+
+```{r out.width='100%', fig.height=5, dev='svg', echo=FALSE, warning=FALSE}
+resultroomT2 <- PaysBasque_listings %>% 
+group_by(property_type) %>% 
+dplyr::summarise(frequency = n()) %>% 
+arrange(desc(frequency)) %>%
+dplyr::mutate(property_type = factor(property_type, levels = unique(property_type)))
+
+hchart(resultroomT2[1:15, ], type = "column", hcaes(x = reorder(property_type, -frequency), y = frequency, color = property_type)) %>%
+  hc_plotOptions(column = list(stacking = "normal", pointWidth = 15)) %>%
+  hc_xAxis(title = list(text = "Frequence")) %>%
+  hc_yAxis(title = list(text = "Nbr de Biens immobiliers Airbnb")) %>%
+  hc_title(text = "Les 15 type de biens immobiliers loués en Pays Basque") %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_chart(inverted = TRUE) %>%
+  hc_tooltip(
+    pointFormat = "Nbr : <b>{point.y}</b>"
+  ) %>%
+  hc_add_theme(hc_theme_ffx())
+```
+
+---
+
+# 1.3 Les grandes villes ont la cote
+Il est intéressant de voir quelles villes représentent en majorité ce territoire du Pays basque, pas vraiment un département, ni une région
+
+```{r out.width='100%', fig.height=5, dev='svg', echo=FALSE, warning=FALSE}
+resultneighb <- PaysBasque_listings %>% 
+  group_by(neighbourhood_cleansed) %>% 
+  dplyr::summarize(count =n()) %>% 
+  arrange(desc(count))
+
+hchart(resultneighb[1:10, ], type = "column", hcaes(x = reorder(neighbourhood_cleansed, -count), y = count)) %>%
+  hc_plotOptions(column = list(stacking = "normal", pointWidth = 15)) %>%
+  hc_xAxis(title = list(text = "")) %>%
+  hc_yAxis(title = list(text = "Nbr de locations Airbnb")) %>%
+  hc_title(text = "Les 10 principales villes des locations") %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_chart(inverted = TRUE) %>%
+  hc_tooltip(
+    pointFormat = "Nbr : <b>{point.y}</b>"
+  ) %>%
+  hc_add_theme(hc_theme_ffx())
+```
+
+---
+
+# 1.4 S'évader à tout moment de l'année
+
+La courbe ci-après présente la répartition des annonces en fonction des disponibilités proposées par les hôtes.
+
+```{r out.width='100%', fig.height=5, dev='svg', echo=FALSE, warning=FALSE}
+availability_count <- PaysBasque_listings %>% 
+  group_by(availability_365) %>% 
+  dplyr::summarize(count =n()) %>% 
+  arrange(availability_365)
+
+# enlève le 0 qui écrase le graphe
+availability_count <- availability_count %>%
+  filter(availability_365 != 0)
+
+availability_count <- availability_count %>%
+  mutate(availability_365 = factor(availability_365, levels = 0:365))
+
+hchart(availability_count, "line", hcaes(x = availability_365, y = count)) %>%
+  hc_xAxis(title = list(text = "Nombre de jours disponibles par an")) %>%
+  hc_yAxis(title = list(text = "Nombre d'annonces")) %>%
+  hc_title(text = "Courbe de disponibilité")  %>%
+  hc_tooltip(
+    pointFormat = "<b>{point.y}</b> annonces<br>disponibles : <b>{point.x}</b> jours"
+  ) %>%
+  hc_add_theme(hc_theme_ffx())
+
+```
+
+---
+
+# 1.5 Ancrés dans le terroir
+Une première idée est de savoir d'où ils viennent et si ils habitent sur le même territoire que leurs annonces.
+```{r eval=require('DT'), tidy=FALSE, echo=FALSE, warning=FALSE}
+
+# tableau des host_country
+
+result_host_country <- PaysBasque_listings %>%
+  group_by(host_country) %>%
+  dplyr::summarise(frequency = n()) %>%
+  arrange(desc(frequency))
+
+# ajout d'une colonne pourcentage
+result_host_country <- result_host_country %>%
+  mutate(percentage = (frequency / sum(frequency)) * 100)
+
+# Formater la colonne "pourcentage" avec deux décimales et le symbole %
+result_host_country$percentage <- sprintf("%.2f%%", result_host_country$percentage)
+
+result_host_country %>%
+DT::datatable(
+  fillContainer = FALSE, 
+  options = list(pageLength = 6,
+  searching = FALSE)
+)
+
+```
+
+---
+# 1.6 Un chez soi pour les autres
+Presque 40% habite dans les principales villes du pays basque (Biarritz, Anglet, Bayonne, Saint-Jean-de-Luz, Hendaye et Bidart), à l'exception de Paris, on trouve aussi des étrangers louant leur biens secondaires.
+```{r out.width='100%', fig.height=5, dev='svg', echo=FALSE, warning=FALSE}
+# tableau des host_location
+result_host_loc <- PaysBasque_listings %>%
+  group_by(host_location) %>%
+  dplyr::summarise(frequency = n()) %>%
+  arrange(desc(frequency))
+
+# ajout d'une colonne pourcentage
+result_host_loc <- result_host_loc %>%
+  mutate(percentage = (frequency / sum(frequency)) * 100)
+
+# Formater la colonne "pourcentage" avec deux décimales et le symbole %
+result_host_loc$percentage <- sprintf("%.2f%%", result_host_loc$percentage)
+
+# suppression de la 1er ligne des NA
+result_host_loc <- result_host_loc[-1, ]
+
+hchart(result_host_loc[1:10, ], type = "column", hcaes(x = reorder(host_location, -frequency), y = frequency, color = host_location)) %>%
+  hc_plotOptions(column = list(stacking = "normal", pointWidth = 15)) %>%
+  hc_xAxis(title = list(text = "")) %>%
+  hc_yAxis(title = list(text = "Nbr de d'annonces Airbnb")) %>%
+  hc_title(text = "Les 10 principales villes des hôtes") %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_chart(inverted = TRUE) %>%
+  hc_tooltip(
+    pointFormat = "Nbr : <b>{point.y}</b>"
+  ) %>%
+  hc_add_theme(hc_theme_ffx())
+```
+
+---
+
+# 1.7 L'arbre peut cacher la forêt
+Il est intéressant d'effectuer un tableau croisé dynamique sur le comptage des hôtes uniques dans tout le corpus, car cela révèle les hôtes qui mènent un véritable business, on retrouve d'ailleurs dans le classement des premiers, des professionnels comme des agences immobilières ou des résidences de vacances.
+
+
+```{r out.width='100%', fig.height=4, dev='svg',echo=FALSE, warning=FALSE}
+
+# tableau des host_location
+result_host_name <- PaysBasque_listings %>%
+  group_by(host_name) %>%
+  dplyr::summarise(frequency = n()) %>%
+  arrange(desc(frequency))
+
+
+hchart(result_host_name[1:10, ], type = "column", hcaes(x = reorder(host_name, -frequency), y = frequency, color = host_name)) %>%
+  hc_plotOptions(column = list(stacking = "normal", pointWidth = 10)) %>%
+  hc_xAxis(title = list(text = "")) %>%
+  hc_yAxis(title = list(text = "Nbr de d'annonces Airbnb")) %>%
+  hc_title(text = "Les 10 hôtes aux annonces multiples") %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_chart(inverted = TRUE) %>%
+  hc_tooltip(
+    pointFormat = "Nbr : <b>{point.y}</b>"
+  ) %>%
+  hc_add_theme(hc_theme_ffx())
+
+```
+
+
+---
+
+# 1.8 Etre au top, ça paye
+Pour Airbnb, les superhost sont des hôtes expérimentés qui donnent l'exemple aux autres hôtes et font vivre des expériences extraordinaires à leurs invités.
+
+
+```{r out.width='100%', fig.height=4, dev='svg', echo=FALSE, warning=FALSE}
+resultsuper <- PaysBasque_listings %>%
+  filter(!is.na(review_scores_rating), !is.na(host_is_superhost))%>% 
+  filter(host_is_superhost != "") %>%
+  select(review_scores_rating, host_id, host_name, host_is_superhost)
+
+resultsuper %>% 
+  ggplot(aes(x = review_scores_rating,
+             fill = host_is_superhost)) +
+  geom_density(alpha = 0.5) +
+  labs(x = "Notes d'évaluation",
+       y= "Fréquence",
+       fill = "Est un Superhost") +
+  theme(legend.position = "top")
+```
+
+
+---
+
+# 1.9 Quel engouement pour Airbnb ?
+```{r, out.width='100%', fig.height=4, dev='svg', warning=FALSE, echo=FALSE, message=FALSE}
+resultdate <- PaysBasque_listings %>%
+  filter(!is.na(host_since)) %>%
+  mutate(month = month(host_since), year = year(host_since)) %>%
+  group_by(month, year) %>%
+  dplyr::summarise(frequency = n())
+
+resultdate$month <- factor(resultdate$month, levels = 1:12, labels = c("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"))
+
+resultdate %>% 
+  ggplot(aes(x = year,
+             y = month,
+             fill = frequency
+             )
+         ) +
+  geom_tile(color = "white") +
+  scale_x_continuous(breaks = seq(2000, 2025, 2) ) +
+  theme_minimal() +
+  theme(legend.position = "top") +
+  scale_fill_viridis_c(option = "B") +
+  labs(x = "Année",
+       y = "mois",
+       fill = "Frequency"
+       ) 
+```
+
+---
+## Explication
+Nous vérifions dans le graphe précédent le nombre d’adhésions mensuelles au fil du temps, que nous indique le champ `host_since`. Celà permet de suivre les anciens membres et les nouveaux arrivants.
+
+Cette heatmap montre qu'une majorité d'hôtes a commencé à rejoindre Airbnb plutôt depuis 2015, avec un record en janvier 2017 (il serait intéressant de savoir pourquoi, est ce que ça serait avec l'arrivée de professionnels comme Poplidays, qui n'a pas renseigné le champ `host_since` au demeurant). 
+
+On voit clairement que ça se ralentit depuis 2019, donc avant le Covid. Mais il semble que les adhésions se maintiennent petitement tout de même, malgré le coup d'arrêt mondial que nous avons subi en 2021/2022.
+
+---
+
+class: inverse, middle, center
+
+# 2. Analyses exploratoires
+#### Pour la partie Analyse exploratoire des prix et Textmining sur les variables textuelles, voir le document plus complet :
+
+[PaysBasqueAirbnb2023](PaysBasqueAirbnb2023.html)
+
+
+---
+
+# 2.1 Qu'est ce qui fait courir les prix ?
+```{r, out.width='100%', fig.height=5, dev='svg', echo=FALSE, warning=FALSE }
+# Selection des variables numeriques
+corr <- PaysBasque_listings %>% 
+  dplyr::select(c("host_response_rate", "host_acceptance_rate", "host_total_listings_count", "accommodates", "bedrooms", "price", "minimum_nights", "maximum_nights", "review_scores_rating", "review_scores_accuracy","review_scores_cleanliness", "review_scores_checkin", "review_scores_communication", "review_scores_location", "review_scores_value")) %>%  .[complete.cases(.), ]
+
+# arrondir les valeurs de correlation à 2 decimales
+corr_num <- round(cor(select_if(corr, is.numeric)), 2)
+
+# library ggcorrplot. la taille depend de la valeur du coefficient de correlation.
+ggcorrplot(corr_num, type = "lower", lab = TRUE,
+            lab_size = 2, method = "circle")
+```
+
+---
+
+## Analyse des corrélations
+La corrélation la plus élevée concerne évidemment la relation entre la capacité maximum de personnes (*accomodates*) et le nombre de chambres proposés (0,86). 
+
+Le graphe montre aussi que toutes les notes d’évaluation ont une forte corrélation entre elles avec une valeur pour presque tous supérieure à 0,5 (à cela rien d'étonnant).
+
+En revanche, le prix a une très faible corrélation avec le nombre de chambres et de capacité autorisés dans un endroit. De même, le prix a également une corrélation très faible voire négative avec les notes d’évaluation, ce qui montre que le prix n’a pas d’effet sur les notes d’évaluation des clients. 
+
+On pourrait émettre l'hypothèse que les scores d’évaluation dépendent d’autres facteurs et non du prix, par exemple que si un hôte traite bien ses clients, il peut obtenir un score d’évaluation élevé.
+
+---
+
+# 2.2 Wordcloud de "Logement entier"
+Le wordcloud suivant porte sur le champ `description` du type de location `Entire home/apt` : 
+```{r, out.width='100%', fig.height=4, dev='svg', echo=FALSE, warning=FALSE }
+WC_appart1 <- PaysBasque_listings %>% 
+                  filter(room_type == "Entire home/apt",
+                          number_of_reviews > 2) %>% 
+                  select(description)
+
+WC_appart1 <- VCorpus(VectorSource(WC_appart1))
+
+WC_appart1 <- tm_map(WC_appart1, stripWhitespace)
+WC_appart1 <- tm_map(WC_appart1, content_transformer(tolower))
+WC_appart1 <- tm_map(WC_appart1, removeWords, c(stopwords("fr"), "avec", "une", "pour", "les", "vous", "dans", "des", "peu", "the", "tous", "toute", "toutes", "sont", "nous", "entre", "and", "with", "this", "for", "from", "are"))
+WC_appart1 <- tm_map(WC_appart1, removePunctuation)
+
+wordcloud(words = WC_appart1, 
+          min.freq = 2, 
+          max.words = 150, 
+          color=brewer.pal(8, "Dark2"),
+          random.order = F,
+          use.r.layout = F,
+          rot.per = 0.35)
+```
+
+
+---
+
+# 2.3 Wordcloud pour "Chambre privée"
+Les mots de la description concernant les annonces de chambres privées semble plus détaillée en information descriptives que le précédent.
+
+
+```{r, out.width='100%', fig.height=4, dev='svg', echo=FALSE, warning=FALSE}
+
+WC_privroom1 <- PaysBasque_listings %>% 
+                  filter(room_type == "Private room",
+                          number_of_reviews > 2) %>% 
+                  select(description)
+
+WC_privroom1 <- VCorpus(VectorSource(WC_privroom1))
+
+WC_privroom1 <- tm_map(WC_privroom1, stripWhitespace)
+WC_privroom1 <- tm_map(WC_privroom1, content_transformer(tolower))
+WC_privroom1 <- tm_map(WC_privroom1, removeWords, c(stopwords("fr"), "avec", "une", "pour", "les", "vous", "dans", "des", "peu", "the", "tous", "toute", "toutes", "sont", "nous", "entre", "and", "with", "this", "for", "from", "are"))
+WC_privroom1 <- tm_map(WC_privroom1, removePunctuation)
+
+wordcloud(words = WC_privroom1, 
+          min.freq = 2, 
+          max.words = 150, 
+          color=brewer.pal(8, "Dark2"),
+          random.order = F,
+          use.r.layout = F,
+          rot.per = 0.35)
+```
+
+
+
+---
+
+# Conclusion de l'étude
+
+Le corpus des offres Airbnb du Pays basque a pu donner beaucoup d'information pour tenter de qualifier l'offre touristique de ce territoire. Enormément d'informations et de croisement sont possibles, les variables numériques, logiques et textuelles nombreuses permettent de triturer les données dans tous les sens. 
+
+On peut tirer déjà quelques conclusions sur le ou les profils des hôtes et des types de locations proposées dans le Pays basque qui jouit à la fois de ses atouts terre et mer, de lieux pitoresques chargés d'histoire et sa très bonne qualité de vie. Bien évidemment, d'autres analyses plus poussées pourraient nous aider à aller plus au fond des choses.
+
+Il a fallu faire des choix sur ce qui était possible de faire dans le temps imparti. Mes choix se sont orientés sur mes thèmes de prédilection que sont le textmining, donc pour ce qui concerne les analyses économétriques et topologiques, un recul et une expertise méthodologique m'ont manqué pour avancer sur cette partie.
+
+.footnote[
+[1] Voir l'étude complète Livrable 4&5 : [PaysBasqueAirbnb2023](PaysBasqueAirbnb2023.html)
+]
+
+---
+
+class: center, middle
+
+# Merci à toute l'équipe !
+
+Ces 5 mois ont été denses
+
+Peu de temps pour assimiler tant de choses
+
+L'avenir nous dira si toutes ces connaissances seront profitables
+
